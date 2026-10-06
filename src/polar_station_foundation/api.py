@@ -9,7 +9,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from .errors import DomainError, ValidationError
-from .service import DomainService
+from .allocations_service import AllocationService
 from .storage import Database
 
 
@@ -48,6 +48,75 @@ def route(service: DomainService, method: str, path: str, body: dict[str, Any] |
             query = parse_qs(parsed.query)
             after = int(query.get("after_sequence", ["0"])[0])
             return 200, {"items": service.audit_events(after)}
+
+        # ------------------------------------------------------------
+        # 样品分配与出口许可
+        # ------------------------------------------------------------
+        if method == "POST" and parsed.path == "/sample-batches":
+            receipt = service.register_batch(actor_id=actor_id, **body)
+            return 200 if receipt.replayed else 201, receipt.__dict__
+        if method == "POST" and parsed.path == "/laboratories":
+            receipt = service.register_lab(actor_id=actor_id, **body)
+            return 200 if receipt.replayed else 201, receipt.__dict__
+        if method == "POST" and parsed.path == "/laboratories/withdraw":
+            receipt = service.withdraw_lab(actor_id=actor_id, **body)
+            return 200 if receipt.replayed else 201, receipt.__dict__
+        if method == "POST" and parsed.path == "/lab-qualifications":
+            receipt = service.register_qualification(actor_id=actor_id, **body)
+            return 200 if receipt.replayed else 201, receipt.__dict__
+        if method == "POST" and parsed.path == "/lab-qualifications/revoke":
+            receipt = service.revoke_qualification(actor_id=actor_id, **body)
+            return 200 if receipt.replayed else 201, receipt.__dict__
+        if method == "POST" and parsed.path == "/permits/versions":
+            receipt = service.register_permit_version(actor_id=actor_id, **body)
+            return 200 if receipt.replayed else 201, receipt.__dict__
+        if method == "POST" and parsed.path == "/permits/withdraw":
+            receipt = service.withdraw_permit(actor_id=actor_id, **body)
+            return 200 if receipt.replayed else 201, receipt.__dict__
+        if method == "POST" and parsed.path == "/mtas":
+            receipt = service.register_mta(actor_id=actor_id, **body)
+            return 200 if receipt.replayed else 201, receipt.__dict__
+        if method == "POST" and parsed.path == "/allocations/applications":
+            receipt = service.submit_application(actor_id=actor_id, **body)
+            return 200 if receipt.replayed else 201, receipt.__dict__
+        if method == "POST" and parsed.path == "/allocations/approve":
+            receipt = service.approve_application(actor_id=actor_id, **body)
+            return 200 if receipt.replayed else 201, receipt.__dict__
+        if method == "POST" and parsed.path == "/shipments":
+            receipt = service.ship_shipment(actor_id=actor_id, **body)
+            return 200 if receipt.replayed else 201, receipt.__dict__
+        if method == "POST" and parsed.path == "/shipments/events":
+            receipt = service.shipment_event(actor_id=actor_id, **body)
+            return 200 if receipt.replayed else 201, receipt.__dict__
+        if method == "POST" and parsed.path == "/allocations/consumptions":
+            receipt = service.record_consumption(actor_id=actor_id, **body)
+            return 200 if receipt.replayed else 201, receipt.__dict__
+        if method == "POST" and parsed.path == "/allocations/returns":
+            receipt = service.register_return_shipment(actor_id=actor_id, **body)
+            return 200 if receipt.replayed else 201, receipt.__dict__
+        if method == "POST" and parsed.path == "/allocations/restock":
+            receipt = service.restock_returned(actor_id=actor_id, **body)
+            return 200 if receipt.replayed else 201, receipt.__dict__
+        if method == "POST" and parsed.path == "/publications":
+            receipt = service.register_publication(actor_id=actor_id, **body)
+            return 200 if receipt.replayed else 201, receipt.__dict__
+        if method == "GET" and parsed.path.startswith("/batches/"):
+            parts = parsed.path.strip("/").split("/")
+            if len(parts) == 3 and parts[2] == "reconcile":
+                return 200, service.reconcile_batch(parts[1])
+            if len(parts) == 2:
+                return 200, service.get_batch(parts[1])
+        if method == "GET" and parsed.path == "/allocations":
+            query = parse_qs(parsed.query)
+            batch_id = query.get("batch_id", [None])[0]
+            lab_id = query.get("lab_id", [None])[0]
+            return 200, {"items": service.list_allocations(batch_id, lab_id)}
+        if method == "GET" and parsed.path.startswith("/allocations/"):
+            parts = parsed.path.strip("/").split("/")
+            if len(parts) == 2:
+                return 200, service.get_allocation(parts[1])
+            if len(parts) == 3 and parts[2] == "shipments":
+                return 200, {"items": service.list_shipments(parts[1])}
         return 404, {"error": "route_not_found", "message": "接口不存在"}
     except DomainError as exc:
         return exc.status, {"error": exc.code, "message": str(exc)}
@@ -99,7 +168,7 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=8080)
     args = parser.parse_args()
     database = Database(args.database)
-    Handler.service = DomainService(database)
+    Handler.service = AllocationService(database)
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     try:
         server.serve_forever()
